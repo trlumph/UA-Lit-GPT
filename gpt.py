@@ -197,6 +197,10 @@ class GPTLanguageModel(nn.Module):
 
 m = GPTLanguageModel()
 m = m.to(device)
+
+# Load the weights from the file
+m.load_state_dict(torch.load('gpt_model_weights.pth'))
+
 # print the number of parameters in the model
 print(sum(p.numel() for p in m.parameters())/1e6, 'М параметрів')
 
@@ -216,3 +220,6 @@ for step in range(max_iters):
 # Generate some text
 context = torch.zeros((1, 1), dtype=torch.long, device=device)
 print(decode(m.generate(context, max_new_tokens=500)[0].tolist()))
+
+# Save the model's state_dict
+torch.save(m.state_dict(), 'gpt_model_weights.pth')
