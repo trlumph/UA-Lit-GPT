@@ -1,14 +1,23 @@
+import torch
+import torch.nn as nn
+from torch.nn import functional as F
+
+
+batch_size = 32 # how many independent sequences will we process in parallel?
+block_size = 8 # what is the maximum context length for predictions?
+max_iters = 10000
+eval_interval = 500
+learning_rate = 1e-2
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+eval_iters = 200
+
+torch.manual_seed(2023)
+
 with open('input.txt', 'r', encoding='utf-8') as f:
     text = f.read()
 
-print('Довжина датасету в символах:', len(text))
-
-print('Перші 250 символів датасету:', text[:250])
-
 chars = sorted(list(set(text)))
 vocab_size = len(chars)
-print(''.join(chars))
-print(vocab_size)
 
 # Create a mapping from characters to numbers
 stoi = {ch: i for i, ch in enumerate(chars)}
@@ -16,32 +25,10 @@ itos = {i: ch for i, ch in enumerate(chars)}
 encode = lambda x: [stoi[ch] for ch in x]
 decode = lambda x: ''.join([itos[ch] for ch in x])
 
-print(encode('Привіт ЮА-Літ-ГПТ'))
-print(decode(encode('Привіт ЮА-Літ-ГПТ')))
-
-import torch
-
 data = torch.tensor(encode(text), dtype=torch.long)
-print(data.shape, data.dtype)
-print(data[:250])
-
 n = int(0.9 * len(data))
 train_data = data[:n]
 val_data = data[n:]
-
-block_size = 8
-print(train_data[:block_size + 1])
-
-x = train_data[:block_size]
-y = train_data[1:block_size + 1]
-for t in range(block_size):
-    context = x[:t + 1]
-    target = y[t]
-    print(f'коли вхідний текст: {decode(context.tolist())}, очікуємо наступний символ: {decode([target.tolist()])}')
-
-torch.manual_seed(2023)
-batch_size = 4  # how many sequences to process in parallel
-block_size = 8  # maximum context length for predictions
 
 
 def get_batch(split):
@@ -50,30 +37,23 @@ def get_batch(split):
     ix = torch.randint(len(data) - block_size, size=(batch_size,))
     x = torch.stack([data[i:i + block_size] for i in ix])
     y = torch.stack([data[i + 1:i + block_size + 1] for i in ix])
+    x, y = x.to(device), y.to(device)
     return x, y
 
 
-xb, yb = get_batch('train')
-print('Вхідні дані:')
-print(xb.shape)
-print(xb)
-print('Цільові дані:')
-print(yb.shape)
-print(yb)
-
-print('---------------------')
-
-for b in range(batch_size):  # batch dimension
-    for t in range(block_size):  # time dimension
-        context = xb[b, :t + 1]
-        target = yb[b, t]
-        print(f'коли вхідний текст: {decode(context.tolist())}, очікуємо наступний символ: {decode([target.tolist()])}')
-
-import torch
-import torch.nn as nn
-from torch.nn import functional as F
-
-torch.manual_seed(2023)
+@torch.no_grad()
+def estimate_loss():
+    out = {}
+    m.eval()
+    for split in ['train', 'val']:
+        losses = torch.zeros(eval_iters)
+        for k in range(eval_iters):
+            X, Y = get_batch(split)
+            logits, loss = m(X, Y)
+            losses[k] = loss.item()
+        out[split] = losses.mean()
+    m.train()
+    return out
 
 
 class BigramLanguageModel(nn.Module):
@@ -112,21 +92,21 @@ class BigramLanguageModel(nn.Module):
 
 
 m = BigramLanguageModel(vocab_size)
-logits, loss = m(xb, yb)
-print(logits.shape)
-print(loss)
-
-idx = torch.zeros((1, 1), dtype=torch.long)
-print(decode(m.generate(idx, max_new_tokens=100)[0].tolist()))
+m = m.to(device)
 
 optimizer = torch.optim.AdamW(m.parameters(), lr=1e-3)
 
-batch_size = 32
-for steps in range(100):
+for step in range(max_iters):
     xb, yb = get_batch('train')
     logits, loss = m(xb, yb)
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
 
-    print(f'Поточна втрата: {loss.item():.2f}')
+    if step % eval_interval == 0:
+        losses = estimate_loss()
+        print(f"Крок {step}, тренувальна втрата: {losses['train']:.4f}, валідаційна втрата: {losses['val']:.4f}")
+
+# Generate some text
+context = torch.zeros((1, 1), dtype=torch.long, device=device)
+print(decode(m.generate(context, max_new_tokens=500)[0].tolist()))
